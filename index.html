@@ -14,17 +14,14 @@
       --muted: #666;
       --radius: 12px;
     }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
       color: var(--text);
       background: var(--bg);
     }
-    .wrap {
-      max-width: 760px;
-      margin: 40px auto;
-      padding: 0 16px 32px;
-    }
+    .wrap { max-width: 760px; margin: 40px auto; padding: 0 16px 32px; }
     h1 { margin: 0 0 6px; font-size: 28px; }
     p.lead { margin: 0 0 16px; color: var(--muted); }
 
@@ -34,15 +31,16 @@
       border-radius: var(--radius);
       padding: 14px;
     }
-
     #chat { min-height: 180px; }
+    .hidden { display: none; }
 
     .toolbar { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
     .toolbar button, button, .pill {
       appearance: none; border: 1px solid var(--line); background: #fff; color: var(--text);
       padding: 8px 10px; border-radius: 10px; cursor: pointer; font: inherit;
     }
-    .toolbar .pill { background: #f6f6f6; }
+    .pill { background: #f6f6f6; }
+
     .row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
 
     textarea {
@@ -51,7 +49,7 @@
       font: inherit; line-height: 1.4;
     }
 
-    /* Simple chat bubbles */
+    /* Chat bubbles */
     .bubble { margin: 6px 0; }
     .bubble b { color: #111; }
     .bubble i { color: var(--muted); }
@@ -65,9 +63,23 @@
       padding: 8px; overflow: auto;
     }
     #render pre { padding: 12px; }
+
+    /* CSV collapsible */
+    #render details.csv-wrap {
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 8px 10px;
+    }
+    #render details.csv-wrap summary {
+      cursor: pointer;
+      font-weight: 600;
+      margin: 0 0 4px;
+    }
   </style>
 
-  <!-- Libraries: Markdown renderer + PDF generator -->
+  <!-- Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 </head>
@@ -76,21 +88,23 @@
     <h1>Meal Bot Lite</h1>
     <p class="lead">Click <b>Start intake</b>. Answer the questions. When ready, type <i>make my plan</i>.</p>
 
-    <!-- Chat history (plain) -->
+    <!-- Chat (Q&A log) -->
     <div id="chat" class="card"></div>
 
-    <!-- Actions: copy / downloads -->
+    <!-- Actions -->
     <div class="toolbar">
       <button id="copy">Copy</button>
       <button id="downloadTxt">Download .txt</button>
       <button id="downloadPdf">Download PDF</button>
+      <button id="toggleChat">Hide questions</button>
+      <button id="copyCsv">Copy CSV</button>
     </div>
 
-    <!-- Pretty rendered response (Markdown → HTML) -->
+    <!-- Rendered plan (Markdown → HTML) -->
     <div id="render" class="card"></div>
 
-    <!-- Quick templates + Start -->
-    <div class="row">
+    <!-- Quick templates -->
+    <div id="templates" class="row">
       <button id="start">Start intake</button>
       <button class="pill" data-t="3day">+ 3-Day Plan</button>
       <button class="pill" data-t="bento">+ Bento Lunches</button>
@@ -99,9 +113,7 @@
 
     <!-- Input -->
     <textarea id="input" placeholder="Type your answer or ask anything…"></textarea>
-    <div class="row">
-      <button id="send">Send</button>
-    </div>
+    <div class="row"><button id="send">Send</button></div>
   </div>
 
   <script>
@@ -111,16 +123,16 @@
     const input     = document.getElementById("input");
     const sendBtn   = document.getElementById("send");
     const startBtn  = document.getElementById("start");
-    const pillsBar  = document.querySelector('.row');
+    const templatesRow = document.getElementById("templates");
 
-    // --- convenience templates ---
+    // --- Quick templates ---
     const templates = {
       "3day":  "I want a 3-day plan.",
       "bento": "Please include bento-style lunches.",
       "budget":"My budget is tight—favor pantry-first and Costco/Walmart swaps."
     };
 
-    // --- chat state ---
+    // --- Chat state ---
     let messages = [];
 
     function add(role, content) {
@@ -131,15 +143,15 @@
       chatDiv.scrollTop = chatDiv.scrollHeight;
     }
 
-    // Start guided intake
+    // Start intake
     startBtn.onclick = async () => {
       messages = [{ role: "user", content: "Start intake" }];
       add("user", "Start intake");
       await sendToAPI();
     };
 
-    // Template pills fill the input
-    pillsBar.addEventListener("click", (e) => {
+    // Template pills
+    templatesRow.addEventListener("click", (e) => {
       if (e.target.dataset && e.target.dataset.t) {
         input.value = templates[e.target.dataset.t] || "";
         input.focus();
@@ -156,7 +168,7 @@
       await sendToAPI();
     };
 
-    // Call server with message history
+    // Server call with message history
     async function sendToAPI() {
       add("assistant", "<i>Thinking…</i>");
       try {
@@ -167,18 +179,57 @@
         });
         const data = await r.json();
 
-        // remove the "Thinking…" bubble
+        // remove "Thinking…"
         chatDiv.lastChild.remove();
 
         const md = data.reply || "No reply";
-        add("assistant", md);
+
+        // Keep chat tidy
+        add("assistant", "Plan ready below. (You can show/hide questions)");
         messages.push({ role: "assistant", content: md });
 
-        // Render Markdown nicely
+        // Render the plan
         renderDiv.innerHTML = marked.parse(md);
+
+        // Hide the Q&A by default once plan is ready
+        chatDiv.classList.add("hidden");
+        document.getElementById("toggleChat").textContent = "Show questions";
+
+        // Enhance (collapse CSV, etc.)
+        enhanceRendered(md);
+
       } catch (err) {
         chatDiv.lastChild.remove();
         add("assistant", "I’m at capacity—please try again.");
+      }
+    }
+
+    // Enhance the rendered markdown (wrap CSV in a collapsible)
+    function enhanceRendered(md) {
+      const codes = renderDiv.querySelectorAll("pre > code");
+      for (const code of codes) {
+        const text = code.innerText.trim();
+        // Our CSV block starts with "Meal, Day"
+        if (/^Meal\s*,\s*Day/i.test(text)) {
+          const pre = code.parentElement;
+          if (pre.parentElement.tagName.toLowerCase() === "details") break;
+
+          const details = document.createElement("details");
+          details.className = "csv-wrap";
+          details.open = false;
+
+          const summary = document.createElement("summary");
+          summary.textContent = "CSV (copy/paste)";
+
+          pre.replaceWith(details);
+          details.appendChild(summary);
+          details.appendChild(pre);
+
+          // store for Copy CSV button
+          details.dataset.csv = text;
+          renderDiv.dataset.csvFound = "1";
+          break;
+        }
       }
     }
 
@@ -197,25 +248,65 @@
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     };
 
+    // Better PDF formatting (detect headings)
     document.getElementById("downloadPdf").onclick = () => {
       const { jsPDF } = window.jspdf;
       const doc   = new jsPDF({ unit: "pt", format: "letter" });
       const lines = renderDiv.innerText.split("\n");
-      const left = 36, topStart = 48, maxWidth = 540, lineH = 14;
+
+      const left = 36, topStart = 48, maxWidth = 540;
       let y = topStart;
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
+      for (let raw of lines) {
+        let text = raw.trimRight();
+        if (!text) { y += 8; continue; }
 
-      for (const line of lines) {
-        const chunks = doc.splitTextToSize(line, maxWidth);
+        let size = 11, gapBefore = 4, gapAfter = 6;
+        if (text.startsWith("# "))   { size = 18; gapBefore = 10; gapAfter = 10; text = text.replace(/^#\s+/, ""); }
+        else if (text.startsWith("## "))  { size = 15; gapBefore = 8; gapAfter = 8; text = text.replace(/^##\s+/, ""); }
+        else if (text.startsWith("### ")) { size = 13; gapBefore = 6; gapAfter = 6; text = text.replace(/^###\s+/, ""); }
+
+        y += gapBefore;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(size);
+
+        const chunks = doc.splitTextToSize(text, maxWidth);
         for (const cl of chunks) {
           if (y > doc.internal.pageSize.getHeight() - 48) { doc.addPage(); y = topStart; }
           doc.text(cl, left, y);
-          y += lineH;
+          y += size + 3;
         }
+        y += gapAfter;
       }
       doc.save("meal-plan.pdf");
+    };
+
+    // Toggle questions visibility
+    document.getElementById("toggleChat").onclick = () => {
+      const btn = document.getElementById("toggleChat");
+      if (chatDiv.classList.contains("hidden")) {
+        chatDiv.classList.remove("hidden");
+        btn.textContent = "Hide questions";
+      } else {
+        chatDiv.classList.add("hidden");
+        btn.textContent = "Show questions";
+      }
+    };
+
+    // Copy only the CSV block
+    document.getElementById("copyCsv").onclick = async () => {
+      const csvDetails = renderDiv.querySelector("details.csv-wrap");
+      let csv = csvDetails?.dataset.csv || "";
+      if (!csv) {
+        const codes = renderDiv.querySelectorAll("pre > code");
+        for (const code of codes) {
+          const t = code.innerText.trim();
+          if (/^Meal\s*,\s*Day/i.test(t)) { csv = t; break; }
+        }
+      }
+      if (!csv) return alert("No CSV found yet.");
+      await navigator.clipboard.writeText(csv);
+      alert("CSV copied!");
     };
   </script>
 </body>
