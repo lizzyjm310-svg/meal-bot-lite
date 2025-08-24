@@ -77,6 +77,25 @@
       font-weight: 600;
       margin: 0 0 4px;
     }
+
+    /* Thinking status */
+    .status {
+      display: flex; align-items: center; gap: 10px;
+      color: var(--muted); font-size: 14px; margin: 6px 0 0 0;
+    }
+    .dots { display: inline-flex; gap: 4px; }
+    .dots i {
+      width: 6px; height: 6px; background: #bbb; border-radius: 50%; display: inline-block;
+      animation: blink 1s infinite ease-in-out;
+    }
+    .dots i:nth-child(2) { animation-delay: .2s; }
+    .dots i:nth-child(3) { animation-delay: .4s; }
+    @keyframes blink {
+      0%, 80%, 100% { opacity: .35; transform: translateY(0); }
+      40% { opacity: 1; transform: translateY(-3px); }
+    }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    textarea:disabled { background: #f1f1f1; }
   </style>
 
   <!-- Libraries -->
@@ -112,6 +131,12 @@
       <button class="pill" data-t="batch">+ Batch-Prep (Cook Once)</button>
     </div>
 
+    <!-- Status (typing/thinking) -->
+    <div id="status" class="status hidden">
+      <div class="dots"><i></i><i></i><i></i></div>
+      <span id="statusText">Thinking…</span>
+    </div>
+
     <!-- Input -->
     <textarea id="input" placeholder="Type your answer or ask anything…"></textarea>
     <div class="row"><button id="send">Send</button></div>
@@ -119,12 +144,14 @@
 
   <script>
     // --- DOM refs ---
-    const chatDiv   = document.getElementById("chat");
-    const renderDiv = document.getElementById("render");
-    const input     = document.getElementById("input");
-    const sendBtn   = document.getElementById("send");
-    const startBtn  = document.getElementById("start");
-    const templatesRow = document.getElementById("templates");
+    const chatDiv     = document.getElementById("chat");
+    const renderDiv   = document.getElementById("render");
+    const input       = document.getElementById("input");
+    const sendBtn     = document.getElementById("send");
+    const startBtn    = document.getElementById("start");
+    const templatesRow= document.getElementById("templates");
+    const statusBar   = document.getElementById("status");
+    const statusText  = document.getElementById("statusText");
 
     // --- Quick templates ---
     const templates = {
@@ -136,6 +163,7 @@
 
     // --- Chat state ---
     let messages = [];
+    let pendingTimer = null;
 
     function add(role, content) {
       const el = document.createElement("div");
@@ -143,6 +171,21 @@
       el.innerHTML = `<b>${role === "user" ? "You" : "Bot"}:</b> ${content}`;
       chatDiv.appendChild(el);
       chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    function startPending(text = "Thinking…") {
+      statusText.textContent = text;
+      // Delay showing the bar very slightly to avoid flicker on super-fast replies
+      clearTimeout(pendingTimer);
+      pendingTimer = setTimeout(() => statusBar.classList.remove("hidden"), 300);
+      sendBtn.disabled = true;
+      input.disabled = true;
+    }
+    function stopPending() {
+      clearTimeout(pendingTimer);
+      statusBar.classList.add("hidden");
+      sendBtn.disabled = false;
+      input.disabled = false;
     }
 
     // Start intake
@@ -167,11 +210,15 @@
       messages.push({ role: "user", content: text });
       add("user", text);
       input.value = "";
+
+      const isPlanTrigger = /make my plan/i.test(text);
+      startPending(isPlanTrigger ? "Making your plan…" : "Thinking…");
       await sendToAPI();
     };
 
     // Server call with message history
     async function sendToAPI() {
+      // We keep the in-chat hint too (for people who show questions)
       add("assistant", "<i>Thinking…</i>");
       try {
         const r = await fetch("/api/chat", {
@@ -201,8 +248,13 @@
         enhanceRendered(md);
 
       } catch (err) {
-        chatDiv.lastChild.remove();
+        // remove the last "Thinking…" bubble if present
+        if (chatDiv.lastChild && chatDiv.lastChild.innerText?.includes("Thinking")) {
+          chatDiv.lastChild.remove();
+        }
         add("assistant", "I’m at capacity—please try again.");
+      } finally {
+        stopPending();
       }
     }
 
