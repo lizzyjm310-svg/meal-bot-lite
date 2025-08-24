@@ -1,60 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Meal Bot Lite</title>
+
+  <style>
+    :root {
+      --bg: #fafafa;
+      --card: #ffffff;
+      --line: #eaeaea;
+      --text: #222;
+      --muted: #666;
+      --radius: 12px;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .wrap {
+      max-width: 760px;
+      margin: 40px auto;
+      padding: 0 16px 32px;
+    }
+    h1 { margin: 0 0 6px; font-size: 28px; }
+    p.lead { margin: 0 0 16px; color: var(--muted); }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px;
+    }
+
+    #chat { min-height: 180px; }
+
+    .toolbar { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+    .toolbar button, button, .pill {
+      appearance: none; border: 1px solid var(--line); background: #fff; color: var(--text);
+      padding: 8px 10px; border-radius: 10px; cursor: pointer; font: inherit;
+    }
+    .toolbar .pill { background: #f6f6f6; }
+    .row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+
+    textarea {
+      width: 100%; height: 110px; resize: vertical;
+      padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: #fff;
+      font: inherit; line-height: 1.4;
+    }
+
+    /* Simple chat bubbles */
+    .bubble { margin: 6px 0; }
+    .bubble b { color: #111; }
+    .bubble i { color: var(--muted); }
+
+    /* Rendered markdown box */
+    #render { margin-top: 8px; }
+    #render h1, #render h2, #render h3 { margin: 12px 0 6px; }
+    #render ul { padding-left: 20px; }
+    #render code, #render pre {
+      background: #f4f4f4; border: 1px solid var(--line); border-radius: 8px;
+      padding: 8px; overflow: auto;
+    }
+    #render pre { padding: 12px; }
+  </style>
+
+  <!-- Libraries: Markdown renderer + PDF generator -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+</head>
 <body>
-  <div style="font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px;">
-    <h1 style="margin:0 0 8px;">Meal Bot Lite</h1>
-    <p style="margin-top:0;">Click <b>Start intake</b>. Answer the questions. When ready, type <i>make my plan</i>.</p>
+  <div class="wrap">
+    <h1>Meal Bot Lite</h1>
+    <p class="lead">Click <b>Start intake</b>. Answer the questions. When ready, type <i>make my plan</i>.</p>
 
-    <div id="chat" style="border:1px solid #eee;border-radius:10px;padding:12px;min-height:180px;background:#fafafa;"></div>
+    <!-- Chat history (plain) -->
+    <div id="chat" class="card"></div>
 
-    <div style="display:flex;gap:8px;margin:12px 0;">
-      <button id="start">Start intake</button>
-      <button data-t="3day">+ 3-Day Plan</button>
-      <button data-t="bento">+ Bento Lunches</button>
-      <button data-t="budget">+ Tight Budget</button>
+    <!-- Actions: copy / downloads -->
+    <div class="toolbar">
+      <button id="copy">Copy</button>
+      <button id="downloadTxt">Download .txt</button>
+      <button id="downloadPdf">Download PDF</button>
     </div>
 
-    <textarea id="input" placeholder="Type your answer…" style="width:100%;height:110px;"></textarea>
-    <br />
-    <button id="send">Send</button>
+    <!-- Pretty rendered response (Markdown → HTML) -->
+    <div id="render" class="card"></div>
+
+    <!-- Quick templates + Start -->
+    <div class="row">
+      <button id="start">Start intake</button>
+      <button class="pill" data-t="3day">+ 3-Day Plan</button>
+      <button class="pill" data-t="bento">+ Bento Lunches</button>
+      <button class="pill" data-t="budget">+ Tight Budget</button>
+    </div>
+
+    <!-- Input -->
+    <textarea id="input" placeholder="Type your answer or ask anything…"></textarea>
+    <div class="row">
+      <button id="send">Send</button>
+    </div>
   </div>
 
   <script>
-    const chatDiv = document.getElementById("chat");
-    const input = document.getElementById("input");
-    const sendBtn = document.getElementById("send");
-    const startBtn = document.getElementById("start");
-    const templatesBar = document.querySelector('[data-t]')?.parentElement;
+    // --- DOM refs ---
+    const chatDiv   = document.getElementById("chat");
+    const renderDiv = document.getElementById("render");
+    const input     = document.getElementById("input");
+    const sendBtn   = document.getElementById("send");
+    const startBtn  = document.getElementById("start");
+    const pillsBar  = document.querySelector('.row');
 
+    // --- convenience templates ---
     const templates = {
-      "3day": "I want a 3-day plan.",
+      "3day":  "I want a 3-day plan.",
       "bento": "Please include bento-style lunches.",
-      "budget": "My budget is tight—favor pantry-first and Costco/Walmart swaps."
+      "budget":"My budget is tight—favor pantry-first and Costco/Walmart swaps."
     };
 
+    // --- chat state ---
     let messages = [];
 
     function add(role, content) {
       const el = document.createElement("div");
-      el.style.margin = "6px 0";
+      el.className = "bubble";
       el.innerHTML = `<b>${role === "user" ? "You" : "Bot"}:</b> ${content}`;
       chatDiv.appendChild(el);
       chatDiv.scrollTop = chatDiv.scrollHeight;
     }
 
+    // Start guided intake
     startBtn.onclick = async () => {
       messages = [{ role: "user", content: "Start intake" }];
       add("user", "Start intake");
       await sendToAPI();
     };
 
-    if (templatesBar) {
-      templatesBar.addEventListener("click", (e) => {
-        if (e.target.tagName === "BUTTON" && e.target.dataset.t) {
-          input.value = templates[e.target.dataset.t];
-          input.focus();
-        }
-      });
-    }
+    // Template pills fill the input
+    pillsBar.addEventListener("click", (e) => {
+      if (e.target.dataset && e.target.dataset.t) {
+        input.value = templates[e.target.dataset.t] || "";
+        input.focus();
+      }
+    });
 
+    // Send user message
     sendBtn.onclick = async () => {
       const text = input.value.trim();
       if (!text) return;
@@ -64,6 +156,7 @@
       await sendToAPI();
     };
 
+    // Call server with message history
     async function sendToAPI() {
       add("assistant", "<i>Thinking…</i>");
       try {
@@ -73,13 +166,57 @@
           body: JSON.stringify({ messages }),
         });
         const data = await r.json();
-        chatDiv.lastChild.remove(); // remove Thinking…
-        add("assistant", data.reply || "No reply");
-        messages.push({ role: "assistant", content: data.reply || "" });
-      } catch {
+
+        // remove the "Thinking…" bubble
+        chatDiv.lastChild.remove();
+
+        const md = data.reply || "No reply";
+        add("assistant", md);
+        messages.push({ role: "assistant", content: md });
+
+        // Render Markdown nicely
+        renderDiv.innerHTML = marked.parse(md);
+      } catch (err) {
         chatDiv.lastChild.remove();
         add("assistant", "I’m at capacity—please try again.");
       }
     }
+
+    // ---- Toolbar actions ----
+    document.getElementById("copy").onclick = async () => {
+      const txt = renderDiv.innerText;
+      await navigator.clipboard.writeText(txt);
+      alert("Copied!");
+    };
+
+    document.getElementById("downloadTxt").onclick = () => {
+      const txt  = renderDiv.innerText;
+      const blob = new Blob([txt], { type: "text/plain" });
+      const url  = URL.createObjectURL(blob);
+      const a    = Object.assign(document.createElement("a"), { href: url, download: "meal-plan.txt" });
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    };
+
+    document.getElementById("downloadPdf").onclick = () => {
+      const { jsPDF } = window.jspdf;
+      const doc   = new jsPDF({ unit: "pt", format: "letter" });
+      const lines = renderDiv.innerText.split("\n");
+      const left = 36, topStart = 48, maxWidth = 540, lineH = 14;
+      let y = topStart;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+
+      for (const line of lines) {
+        const chunks = doc.splitTextToSize(line, maxWidth);
+        for (const cl of chunks) {
+          if (y > doc.internal.pageSize.getHeight() - 48) { doc.addPage(); y = topStart; }
+          doc.text(cl, left, y);
+          y += lineH;
+        }
+      }
+      doc.save("meal-plan.pdf");
+    };
   </script>
 </body>
+</html>
